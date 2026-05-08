@@ -1,0 +1,7 @@
+pyTelegramBotAPI
+schedule
+openai
+tavily-python
+yfinance
+requests
+beautifulsoup4
