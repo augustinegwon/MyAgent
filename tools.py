@@ -58,3 +58,48 @@ def read_naver_blog(url):
 
     except Exception as e:
         return f"에러 발생: {str(e)}"
+
+# 도구 4: 네이버 블로그 인기글 분석
+def get_naver_blog_top_posts(blog_id, top_n=10):
+    """네이버 블로그 ID → 조회수 상위 top_n 포스트 목록 + 본문 발췌 반환"""
+    print(f"-> [도구 작동] 네이버 블로그 인기글 수집: {blog_id}")
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        'Referer': f'https://blog.naver.com/{blog_id}',
+    }
+    list_url = (
+        "https://blog.naver.com/PostTitleListAsync.naver"
+        f"?blogId={blog_id}&currentPage=1&categoryNo=0"
+        f"&listStyle=style1&sortType=view&countPerPage={top_n}"
+    )
+    try:
+        resp = requests.get(list_url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        return f"블로그 포스트 목록을 가져오지 못했습니다: {e}"
+
+    posts = data.get('postList', [])
+    if not posts:
+        return f"블로그 '{blog_id}'에서 공개 포스트를 찾지 못했습니다. ID를 확인하거나 전체공개 글이 없을 수 있습니다."
+
+    results = []
+    for i, post in enumerate(posts[:top_n], 1):
+        log_no = post.get('logNo')
+        title = post.get('title', '제목 없음')
+        read_count = post.get('readCount', 0)
+        url = f"https://m.blog.naver.com/{blog_id}/{log_no}"
+
+        content = read_naver_blog(url)
+        excerpt = content[:1200]
+
+        try:
+            read_str = f"{int(read_count):,}"
+        except (ValueError, TypeError):
+            read_str = str(read_count)
+
+        results.append(
+            f"[{i}위] {title} (조회수: {read_str})\nURL: {url}\n{excerpt}"
+        )
+
+    return "\n\n---\n\n".join(results)

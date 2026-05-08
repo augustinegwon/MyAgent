@@ -120,3 +120,35 @@ def generate_news_report():
         ]
     )
     return response.choices[0].message.content
+
+def analyze_naver_blog(blog_id):
+    """네이버 블로그 ID → 조회수 상위 10개 글 요약 + 핵심 주제 분석"""
+    print(f"📊 블로그 분석 시작: {blog_id}")
+    raw = tools.get_naver_blog_top_posts(blog_id)
+
+    if "가져오지 못했습니다" in raw or "찾지 못했습니다" in raw:
+        return raw
+
+    prompt = f"""아래는 네이버 블로그 '{blog_id}'의 조회수 상위 포스트들입니다.
+다음 형식으로 분석해주세요.
+
+## 📌 핵심 주제
+이 블로그가 주로 다루는 주제 3~5가지를 bullet로.
+
+## 📝 인기글 요약
+각 글마다: 제목 / 조회수 / 핵심 내용 1~2줄 요약.
+
+## 💡 종합 인사이트
+이 블로그의 콘텐츠 스타일, 독자층, 인기 비결 2~3줄.
+
+---
+{raw}"""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "너는 콘텐츠 분석 전문가다. 한국어로 간결하게 답변해."},
+            {"role": "user", "content": prompt},
+        ],
+    )
+    return response.choices[0].message.content

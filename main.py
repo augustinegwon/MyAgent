@@ -81,6 +81,22 @@ def handle_message(message):
             job_send_report()
             return
 
+        # [블로그 분석] 조회수 상위 10개 글 요약 — 주인 전용
+        if user_text.startswith("블로그분석:") or user_text.startswith("블로그 분석:"):
+            if not is_owner(message):
+                bot.reply_to(message, "⛔ 권한이 없습니다.")
+                return
+            blog_id = user_text.split(":", 1)[1].strip()
+            if not blog_id:
+                bot.reply_to(message, "❌ 블로그 ID를 입력해주세요.\n예) 블로그분석: iaxia_z")
+                return
+            bot.reply_to(message, f"🔍 '{blog_id}' 블로그 인기글 분석 중입니다. 잠시만 기다려주세요... (1~2분 소요)")
+            result = ai_core.analyze_naver_blog(blog_id)
+            if len(result) > 4000:
+                result = result[:4000] + "\n\n(이하 생략)"
+            bot.reply_to(message, result)
+            return
+
         # [리모컨 1] Control+C (비서 강제 재시작) — 주인 전용
         if "control+c" in user_text.lower() or "재시작" in user_text:
             if not is_owner(message):
