@@ -17,4 +17,4 @@ env/
 *.log
 
 # Local secrets — keep config.example.py committed instead
-# config.py
+config.py

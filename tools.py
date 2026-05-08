@@ -31,9 +31,10 @@ def search_web(query, max_results=3):
 def read_naver_blog(url):
     print(f"-> [도구 작동] 네이버 블로그 읽기 시작: {url}")
     headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
+    REQUEST_TIMEOUT = 10
 
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         soup = BeautifulSoup(response.text, 'html.parser')
 
         # [핵심 로직] 모바일 주소인지 PC 주소인지 판별
@@ -45,7 +46,7 @@ def read_naver_blog(url):
             iframe = soup.select_one('iframe#mainFrame')
             if iframe and iframe.get('src'):
                 real_url = "https://blog.naver.com" + iframe.get('src')
-                response = requests.get(real_url, headers=headers)
+                response = requests.get(real_url, headers=headers, timeout=REQUEST_TIMEOUT)
                 soup = BeautifulSoup(response.text, 'html.parser')
             content_area = soup.select_one('.se-main-container') or soup.select_one('#postViewArea')
 

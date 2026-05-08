@@ -14,6 +14,34 @@ bot = telebot.TeleBot(config.TELEGRAM_TOKEN)
 # 텔레그램 코드 블록 기호(백틱 3개)를 안전하게 생성
 TICKS = chr(96) * 3
 
+# --- [보안 설정] ---
+# 터미널 명령에서 차단할 위험 패턴 (소문자 비교)
+DANGEROUS_PATTERNS = [
+    "rm -rf", "rm -fr", "rm  -rf",
+    "mkfs", "dd if=", "dd of=",
+    ":(){", "fork()",
+    "shutdown", "reboot", "halt", "poweroff",
+    "> /dev/sd", "of=/dev/sd",
+    "chmod -r 777 /", "chmod 777 /", "chown -r",
+    "sudo ", "su -", "su root",
+    "passwd ", "userdel", "useradd",
+    "/etc/passwd", "/etc/shadow",
+    "rm -rf /", "rm -rf ~", "rm -rf *",
+]
+MAX_CMD_LENGTH = 500
+SUBPROCESS_TIMEOUT_SEC = 30
+
+
+def is_owner(message):
+    """주인 채팅 ID 확인. 타입에 관계없이 안전하게 비교."""
+    return str(message.chat.id) == str(config.MY_CHAT_ID)
+
+
+def is_dangerous_command(cmd):
+    low = cmd.lower()
+    return any(pat in low for pat in DANGEROUS_PATTERNS)
+
+
 # 1. 정기 보고 발송 작업
 def job_send_report():
     print("📢 정기 보고 생성을 시작합니다...")
@@ -44,29 +72,56 @@ def handle_message(message):
     try:
         user_text = message.text
 
-# [수동 트리거] 뉴스 브리핑 즉시 실행
+        # [수동 트리거] 뉴스 브리핑 즉시 실행 (주인 전용)
         if any(word in user_text for word in ["브리핑", "뉴스", "보고해"]):
+            if not is_owner(message):
+                bot.reply_to(message, "⛔ 권한이 없습니다.")
+                return
             bot.reply_to(message, "⚡ 명령 확인! 즉시 브리핑을 준비합니다. 잠시만 기다려주세요...")
             job_send_report()
             return
 
-        # [리모컨 1] Control+C (비서 강제 재시작)
+        # [리모컨 1] Control+C (비서 강제 재시작) — 주인 전용
         if "control+c" in user_text.lower() or "재시작" in user_text:
+            if not is_owner(message):
+                bot.reply_to(message, "⛔ 권한이 없습니다.")
+                return
             bot.reply_to(message, "⚡ Control+C 수신. 시스템을 종료합니다. (PM2가 즉시 부활시킵니다)")
             os._exit(0)
 
-        # [리모컨 2] 맥북 터미널 원격 조종
+        # [리모컨 2] 맥북 터미널 원격 조종 — 주인 전용 + 위험 명령 차단
         if user_text.startswith("터미널:"):
-            if str(message.chat.id) != config.MY_CHAT_ID:
+            if not is_owner(message):
                 bot.reply_to(message, "⛔ 권한이 없습니다.")
                 return
 
             cmd = user_text.replace("터미널:", "").strip()
+
+            if not cmd:
+                bot.reply_to(message, "❌ 명령어가 비어있습니다.")
+                return
+
+            if len(cmd) > MAX_CMD_LENGTH:
+                bot.reply_to(message, f"❌ 명령어가 너무 깁니다 (최대 {MAX_CMD_LENGTH}자).")
+                return
+
+            if is_dangerous_command(cmd):
+                bot.reply_to(message, "⛔ 위험한 명령어로 판단되어 실행을 차단했습니다.")
+                return
+
             bot.reply_to(message, f"💻 명령어 실행: `{cmd}`", parse_mode="Markdown")
 
             try:
-                result = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT, text=True)
+                result = subprocess.check_output(
+                    cmd,
+                    shell=True,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=SUBPROCESS_TIMEOUT_SEC,
+                )
                 bot.reply_to(message, f"{TICKS}text\n{result[:3900]}\n{TICKS}", parse_mode="Markdown")
+            except subprocess.TimeoutExpired:
+                bot.reply_to(message, f"⏱ 시간 초과 ({SUBPROCESS_TIMEOUT_SEC}초). 명령을 종료했습니다.")
             except subprocess.CalledProcessError as e:
                 bot.reply_to(message, f"❌ 에러 발생:\n{TICKS}text\n{e.output[:3900]}\n{TICKS}", parse_mode="Markdown")
             return
