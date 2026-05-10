@@ -5,6 +5,7 @@ import time
 import threading
 import config
 import ai_core
+from agents import planner
 import os
 import subprocess
 
@@ -35,6 +36,21 @@ SUBPROCESS_TIMEOUT_SEC = 30
 def is_owner(message):
     """주인 채팅 ID 확인. 타입에 관계없이 안전하게 비교."""
     return str(message.chat.id) == str(config.MY_CHAT_ID)
+
+
+def send_long_message(chat_id, text):
+    """4000자 초과 메시지를 줄바꿈 경계 기준으로 분할 전송."""
+    LIMIT = 4000
+    while text:
+        if len(text) <= LIMIT:
+            bot.send_message(chat_id, text, parse_mode="Markdown")
+            break
+        # LIMIT 이하에서 가장 마지막 줄바꿈 위치를 찾아 분할
+        split_at = text.rfind("\n", 0, LIMIT)
+        if split_at == -1:
+            split_at = LIMIT
+        bot.send_message(chat_id, text[:split_at], parse_mode="Markdown")
+        text = text[split_at:].lstrip("\n")
 
 
 def is_dangerous_command(cmd):
@@ -140,6 +156,36 @@ def handle_message(message):
                 bot.reply_to(message, f"⏱ 시간 초과 ({SUBPROCESS_TIMEOUT_SEC}초). 명령을 종료했습니다.")
             except subprocess.CalledProcessError as e:
                 bot.reply_to(message, f"❌ 에러 발생:\n{TICKS}text\n{e.output[:3900]}\n{TICKS}", parse_mode="Markdown")
+            return
+
+        # [멀티 에이전트] Planner 라우팅 — 주인 전용
+        _AGENT_PREFIXES = ("/계획", "/리서치", "/보고", "/agent")
+        _is_agent_call = (
+            any(user_text.startswith(p) for p in _AGENT_PREFIXES)
+            or "@agent" in user_text
+        )
+        if _is_agent_call:
+            if not is_owner(message):
+                bot.reply_to(message, "⛔ 권한이 없습니다.")
+                return
+            # 트리거 키워드 제거
+            clean_text = user_text
+            for prefix in _AGENT_PREFIXES:
+                if clean_text.startswith(prefix):
+                    clean_text = clean_text[len(prefix):].strip()
+                    break
+            clean_text = clean_text.replace("@agent", "").strip()
+            if not clean_text:
+                bot.reply_to(message, "❌ 요청 내용을 입력해주세요.\n예) /agent 강릉 관광 트렌드 분석해줘")
+                return
+            bot.reply_to(message, "🤖 멀티 에이전트 가동 중... (10~30초 소요)")
+            print(f"\n[Planner 요청]: {clean_text}")
+            try:
+                result = planner.run(clean_text)
+                send_long_message(message.chat.id, result)
+            except Exception as e:
+                print(f"[Planner 오류]: {e}")
+                bot.reply_to(message, f"⚠️ 에이전트 처리 중 오류가 발생했습니다: {e}")
             return
 
         # [일반 대화] AI 두뇌 연산

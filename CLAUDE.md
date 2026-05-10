@@ -81,7 +81,7 @@ pm2 restart my_agent
 
 ## 멀티 에이전트 구조
 
-### 현재 상태: Phase 2 완료 (2026-05-10)
+### 현재 상태: Phase 3 완료 (2026-05-10)
 
 | 파일 | 역할 |
 |------|------|
@@ -89,21 +89,40 @@ pm2 restart my_agent
 | `agents/shared.py` | OpenAI 클라이언트 공유, `call_llm()` 헬퍼, 모델 상수 |
 | `agents/writer.py` | 텔레그램 형식 보고서 작성. `write(raw, tone)` API |
 | `agents/researcher.py` | tool-calling 루프로 웹 검색·블로그 수집. `research(topic, max_iterations=3)` API |
+| `agents/planner.py` | gpt-4o 오케스트레이터. `run(user_request, max_iterations=5)` API |
 
-**모델 전략**: Planner → `gpt-4o` / 나머지 Worker → `gpt-4o-mini`
+**모델 전략**: Planner → `gpt-4o` / Researcher·Writer → `gpt-4o-mini`
 
-**Researcher → Writer 파이프라인**:
+**텔레그램 트리거 (주인 전용)**:
+
+| 트리거 | 예시 |
+|--------|------|
+| `/agent <요청>` | `/agent 강릉 11월 단체관광 마케팅 아이디어 3개 정리해줘` |
+| `/계획 <요청>` | `/계획 이키가이 코칭 30대 타겟 콘텐츠 주제 5개` |
+| `/리서치 <요청>` | `/리서치 2025 AI 스타트업 트렌드` |
+| `/보고 <요청>` | `/보고 강릉 지하공간 경쟁사 분석` |
+| `@agent <요청>` | `@agent 코칭 톤으로 정리해줘` |
+
+**Planner 직접 호출** (Python):
 ```python
-# ai_core.py에서 노출
-result = ai_core.research_and_report("강릉 관광 트렌드", tone="마케팅")
+from agents import planner
+result = planner.run("강릉 관광 트렌드 마케팅 보고서")
 ```
 
 **톤 옵션**: `"비서"` (기본) / `"코칭"` / `"마케팅"`
 
-**현재 적용 범위**:
-- `generate_news_report()` — Writer 사용
-- `research_and_report(topic, tone)` — Researcher → Writer 파이프라인
-- `run_conversation()`, `analyze_naver_blog()` — 기존 단일 에이전트 유지
+**비용 가이드라인**:
+- 단순 질문 (도구 미호출): Planner gpt-4o ~$0.003
+- 리서치 포함 (research 1회 + write 1회): ~$0.013/요청
+- Planner max_iterations=5 × Researcher max_iterations=3이 상한선
+
+**현재 라우팅 우선순위** (`main.py`):
+1. 브리핑/뉴스/보고해 → `generate_news_report()`
+2. 블로그분석: → `analyze_naver_blog()`
+3. control+c/재시작 → `os._exit(0)`
+4. 터미널: → subprocess
+5. **/계획·/리서치·/보고·/agent·@agent → `planner.run()`** ← 신규
+6. 그 외 → `run_conversation()`
 
 ### 다음 단계 계획
 
@@ -111,8 +130,8 @@ result = ai_core.research_and_report("강릉 관광 트렌드", tone="마케팅"
 |-------|------|
 | ~~Phase 1~~ | ~~`agents/shared.py` + `agents/writer.py` 분리~~ ✅ |
 | ~~Phase 2~~ | ~~`agents/researcher.py` + Researcher→Writer 파이프라인~~ ✅ |
-| Phase 3 | `agents/planner.py` (gpt-4o) — 사용자 의도 파악 후 Researcher·Writer 오케스트레이션. `main.py` 라우팅 교체 |
-| Phase 4 | `agents/analyst.py` — 수집 결과 분석·인사이트 추출 (선택적 추가) |
+| ~~Phase 3~~ | ~~`agents/planner.py` + `main.py` 라우팅 연결~~ ✅ |
+| Phase 4 | `agents/analyst.py` — 수집 결과 심층 분석·인사이트 추출 (선택적) |
 
 ---
 
