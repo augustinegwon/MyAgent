@@ -2,6 +2,7 @@ import json
 from openai import OpenAI
 import config
 import tools
+from agents import writer
 
 # OpenAI 클라이언트 초기화
 client = OpenAI(api_key=config.OPENAI_API_KEY)
@@ -103,8 +104,7 @@ def generate_news_report():
     """정기 보고용 함수"""
     search_result = tools.search_web(query="오늘의 주요 IT 기술 및 경제 실시간 뉴스", max_results=10)
 
-    prompt = f"""
-    아래 검색 결과를 바탕으로 나에게 가장 도움이 될 만한 핵심 기사 5개를 엄선해줘.
+    raw = f"""아래 검색 결과를 바탕으로 나에게 가장 도움이 될 만한 핵심 기사 5개를 엄선해줘.
     형식:
     1. [기사 제목](기사 링크)
     - 요약: (기사당 공백 포함 300자 내외로 핵심 내용 요약)
@@ -112,14 +112,7 @@ def generate_news_report():
     검색 결과: {search_result}
     """
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "너는 뉴스 큐레이터이자 요약 전문가다. 한국어로 답변해."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-    return response.choices[0].message.content
+    return writer.write(raw, tone="비서")
 
 def analyze_naver_blog(blog_id):
     """네이버 블로그 ID → 조회수 상위 10개 글 요약 + 핵심 주제 분석"""

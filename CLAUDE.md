@@ -79,6 +79,34 @@ pm2 restart my_agent
 
 ---
 
+## 멀티 에이전트 구조
+
+### 현재 상태: Phase 1 완료 (2026-05-10)
+
+`agents/` 폴더에 공유 모듈과 Writer 에이전트만 분리된 상태.
+
+| 파일 | 역할 |
+|------|------|
+| `agents/__init__.py` | 패키지 선언 |
+| `agents/shared.py` | OpenAI 클라이언트 공유, `call_llm()` 헬퍼, 모델 상수 |
+| `agents/writer.py` | 텔레그램 형식 보고서 작성. `write(raw, tone)` API |
+
+**모델 전략**: Planner → `gpt-4o` / 나머지 Worker → `gpt-4o-mini`
+
+**현재 적용 범위**: `generate_news_report()`만 Writer 사용. 나머지 함수는 기존 단일 에이전트 유지.
+
+**톤 옵션**: `"비서"` (기본) / `"코칭"` / `"마케팅"`
+
+### 다음 단계 계획
+
+| Phase | 내용 |
+|-------|------|
+| Phase 2 | `agents/researcher.py` — 웹 검색·블로그 수집 전담 |
+| Phase 3 | `agents/analyst.py` — 수집 결과 분석·인사이트 추출 |
+| Phase 4 | `agents/planner.py` (gpt-4o) — 사용자 의도 파악 후 Researcher·Analyst·Writer 오케스트레이션. `main.py` 라우팅 교체 |
+
+---
+
 ## 알려진 한계
 
 - **대화 히스토리 없음** — 매 메시지가 독립적. 이전 대화 문맥을 이어받지 못한다.
