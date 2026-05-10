@@ -81,29 +81,38 @@ pm2 restart my_agent
 
 ## 멀티 에이전트 구조
 
-### 현재 상태: Phase 1 완료 (2026-05-10)
-
-`agents/` 폴더에 공유 모듈과 Writer 에이전트만 분리된 상태.
+### 현재 상태: Phase 2 완료 (2026-05-10)
 
 | 파일 | 역할 |
 |------|------|
-| `agents/__init__.py` | 패키지 선언 |
+| `agents/__init__.py` | 패키지 선언 및 편의 import |
 | `agents/shared.py` | OpenAI 클라이언트 공유, `call_llm()` 헬퍼, 모델 상수 |
 | `agents/writer.py` | 텔레그램 형식 보고서 작성. `write(raw, tone)` API |
+| `agents/researcher.py` | tool-calling 루프로 웹 검색·블로그 수집. `research(topic, max_iterations=3)` API |
 
 **모델 전략**: Planner → `gpt-4o` / 나머지 Worker → `gpt-4o-mini`
 
-**현재 적용 범위**: `generate_news_report()`만 Writer 사용. 나머지 함수는 기존 단일 에이전트 유지.
+**Researcher → Writer 파이프라인**:
+```python
+# ai_core.py에서 노출
+result = ai_core.research_and_report("강릉 관광 트렌드", tone="마케팅")
+```
 
 **톤 옵션**: `"비서"` (기본) / `"코칭"` / `"마케팅"`
+
+**현재 적용 범위**:
+- `generate_news_report()` — Writer 사용
+- `research_and_report(topic, tone)` — Researcher → Writer 파이프라인
+- `run_conversation()`, `analyze_naver_blog()` — 기존 단일 에이전트 유지
 
 ### 다음 단계 계획
 
 | Phase | 내용 |
 |-------|------|
-| Phase 2 | `agents/researcher.py` — 웹 검색·블로그 수집 전담 |
-| Phase 3 | `agents/analyst.py` — 수집 결과 분석·인사이트 추출 |
-| Phase 4 | `agents/planner.py` (gpt-4o) — 사용자 의도 파악 후 Researcher·Analyst·Writer 오케스트레이션. `main.py` 라우팅 교체 |
+| ~~Phase 1~~ | ~~`agents/shared.py` + `agents/writer.py` 분리~~ ✅ |
+| ~~Phase 2~~ | ~~`agents/researcher.py` + Researcher→Writer 파이프라인~~ ✅ |
+| Phase 3 | `agents/planner.py` (gpt-4o) — 사용자 의도 파악 후 Researcher·Writer 오케스트레이션. `main.py` 라우팅 교체 |
+| Phase 4 | `agents/analyst.py` — 수집 결과 분석·인사이트 추출 (선택적 추가) |
 
 ---
 

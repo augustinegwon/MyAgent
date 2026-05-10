@@ -2,7 +2,7 @@ import json
 from openai import OpenAI
 import config
 import tools
-from agents import writer
+from agents import writer, researcher
 
 # OpenAI 클라이언트 초기화
 client = OpenAI(api_key=config.OPENAI_API_KEY)
@@ -113,6 +113,12 @@ def generate_news_report():
     """
 
     return writer.write(raw, tone="비서")
+
+def research_and_report(topic: str, tone: str = "비서") -> str:
+    """Researcher → Writer 파이프라인. Phase 3 Planner가 호출할 진입점."""
+    raw = researcher.research(topic)
+    return writer.write(raw, tone=tone)
+
 
 def analyze_naver_blog(blog_id):
     """네이버 블로그 ID → 조회수 상위 10개 글 요약 + 핵심 주제 분석"""
