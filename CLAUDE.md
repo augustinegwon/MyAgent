@@ -117,12 +117,22 @@ result = planner.run("강릉 관광 트렌드 마케팅 보고서")
 - Planner max_iterations=5 × Researcher max_iterations=3이 상한선
 
 **현재 라우팅 우선순위** (`main.py`):
-1. 브리핑/뉴스/보고해 → `generate_news_report()`
-2. 블로그분석: → `analyze_naver_blog()`
-3. control+c/재시작 → `os._exit(0)`
-4. 터미널: → subprocess
-5. **/계획·/리서치·/보고·/agent·@agent → `planner.run()`** ← 신규
-6. 그 외 → `run_conversation()`
+
+| 순서 | 조건 | 동작 |
+|------|------|------|
+| ① | `/agent`, `/계획`, `/리서치`, `/보고`, `@agent` | `planner.run()` — **최우선** |
+| ② | `블로그분석:` / `블로그 분석:` prefix | `analyze_naver_blog()` |
+| ③ | `재시작` / `control+c` | `os._exit(0)` |
+| ④ | `터미널:` prefix | subprocess 실행 |
+| ⑤ | 브리핑·뉴스·보고해 (**짧은 명령만**) | `generate_news_report()` |
+| ⑥ | 그 외 | `run_conversation()` |
+
+**⑤ 키워드 매칭 규칙** (`is_short_keyword_command`):
+- 메시지가 정확히 그 단어이거나 (`"브리핑"`)
+- 10자 이내이면서 그 단어로 시작할 때 (`"뉴스 보여줘"`)
+- 긴 문장 안에 우연히 포함된 경우는 무시 (`"강릉 마케팅 브리핑 짜줘"` → run_conversation)
+
+**라우팅 단위 테스트**: `python3 -m unittest tests/test_routing.py -v` (18개 케이스)
 
 ### 다음 단계 계획
 
