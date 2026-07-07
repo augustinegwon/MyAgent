@@ -1,4 +1,18 @@
 /**
+ * 스프레드시트를 열 때 커스텀 메뉴를 생성한다.
+ * (셋업과 거래 제출을 코드로 연결 — 수동 버튼 배치가 없어도 동작)
+ */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('📦 재고관리')
+    .addItem('① 시스템 초기화 (시트 생성)', 'setupInventorySystem')
+    .addItem('② 입력 시트 생성', 'setupInputSheet')
+    .addSeparator()
+    .addItem('📥 거래 제출 (Submit)', 'submitTransaction')
+    .addToUi();
+}
+
+/**
  * System Initialization Script (Serial Number Management Included)
  */
 function setupInventorySystem() {

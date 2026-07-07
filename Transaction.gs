@@ -93,76 +93,142 @@ function submitTransaction() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const inputSheet = ss.getSheetByName('Input_Transaction');
   const ledgerSheet = ss.getSheetByName('Ledger');
-  
-  const type = inputSheet.getRange('F3').getValue();
-  const itemName = inputSheet.getRange('F4').getValue(); 
-  let serial = inputSheet.getRange('F5').getValue();
-  let fromLoc = inputSheet.getRange('F6').getValue();
-  let toLoc = inputSheet.getRange('F7').getValue();
-  let quantity = inputSheet.getRange('F8').getValue();
-  const worker = inputSheet.getRange('F9').getValue();
-  const note = inputSheet.getRange('F10').getValue();
-  
-  if (!type || !itemName || !quantity) {
-    ss.toast('❌ Error: Type, Item, and Quantity are required.', 'Validation Error', 5);
+
+  // 여러 작업자가 동시에 제출할 때 재고 검증~기록 사이의 경쟁을 막는다.
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (err) {
+    ss.toast('❌ 다른 작업이 처리 중입니다. 잠시 후 다시 시도하세요.', 'Busy', 5);
     return;
-  }
-  
-  // Manage Serial 유무 확인
-  const settingsSheet = ss.getSheetByName('Settings');
-  const mapping = settingsSheet.getRange('B2:C' + settingsSheet.getLastRow()).getValues();
-  let category = 'UNCATEGORIZED';
-  let isSerial = 'NO';
-  
-  for (let i = 0; i < mapping.length; i++) {
-    if (mapping[i][0] === itemName) {
-      isSerial = mapping[i][1];
-      break;
-    }
-  }
-  
-  // Category 찾기 (A열)
-  const catData = settingsSheet.getRange('A2:B' + settingsSheet.getLastRow()).getValues();
-  for (let i = 0; i < catData.length; i++) {
-    if (catData[i][1] === itemName) {
-      category = catData[i][0];
-      break;
-    }
   }
 
-  if (isSerial === 'YES') {
-    if (!serial || serial === 'N/A') {
-      ss.toast('❌ Error: Serial Number is required for this item.', 'Validation Error', 5);
+  try {
+    const type = inputSheet.getRange('F3').getValue();
+    const itemName = inputSheet.getRange('C4').getValue(); // 미러 셀(F4) 대신 원본 C4를 직접 읽는다.
+    let serial = inputSheet.getRange('F5').getValue();
+    let fromLoc = inputSheet.getRange('F6').getValue();
+    let toLoc = inputSheet.getRange('F7').getValue();
+    let quantity = inputSheet.getRange('F8').getValue();
+    const worker = inputSheet.getRange('F9').getValue();
+    const note = inputSheet.getRange('F10').getValue();
+
+    if (!type || !itemName || !quantity) {
+      ss.toast('❌ Error: Type, Item, and Quantity are required.', 'Validation Error', 5);
       return;
     }
-    quantity = 1; // 시리얼 관리는 무조건 수량 1 고정
-  } else {
-    serial = 'N/A'; // 시리얼 관리 안 하는 항목은 N/A
+
+    // Settings에서 카테고리 + 시리얼 관리 여부를 한 번에 조회 (A:Category, B:Item, C:Manage Serial)
+    const settingsSheet = ss.getSheetByName('Settings');
+    const lastRow = settingsSheet.getLastRow();
+    let category = 'UNCATEGORIZED';
+    let isSerial = 'NO';
+    if (lastRow >= 2) {
+      const master = settingsSheet.getRange(2, 1, lastRow - 1, 3).getValues();
+      for (let i = 0; i < master.length; i++) {
+        if (master[i][1] === itemName) {
+          category = master[i][0] || 'UNCATEGORIZED';
+          isSerial = master[i][2];
+          break;
+        }
+      }
+    }
+
+    if (isSerial === 'YES') {
+      if (!serial || serial === 'N/A') {
+        ss.toast('❌ Error: Serial Number is required for this item.', 'Validation Error', 5);
+        return;
+      }
+      quantity = 1; // 시리얼 관리는 무조건 수량 1 고정
+    } else {
+      serial = 'N/A'; // 시리얼 관리 안 하는 항목은 N/A
+    }
+
+    if (type === 'ADD' && !fromLoc) fromLoc = 'EXTERNAL (VENDOR)';
+    if (type === 'REMOVE' && !toLoc) toLoc = 'EXTERNAL (SCRAP)';
+    if (!fromLoc || !toLoc) {
+      ss.toast(`❌ Error: 'From' and 'To' locations must be valid.`, 'Validation Error', 5);
+      return;
+    }
+    if (type === 'MOVE' && fromLoc === toLoc) {
+      ss.toast('❌ Error: From과 To 위치가 동일합니다.', 'Validation Error', 5);
+      return;
+    }
+
+    // 검증용 원장 스냅샷 (Lock 안에서 읽어 일관성 보장)
+    const ledgerData = ledgerSheet.getDataRange().getValues();
+
+    // ① 시리얼 품목 ADD 중복 등록 방지
+    if (type === 'ADD' && isSerial === 'YES' && serialExists(ledgerData, itemName, serial)) {
+      ss.toast(`❌ Error: 시리얼 '${serial}'는 이미 재고에 존재합니다.`, 'Validation Error', 6);
+      return;
+    }
+
+    // ② MOVE/REMOVE 시 출발지 재고 부족 방지 (음수 재고 차단)
+    if (type === 'MOVE' || type === 'REMOVE') {
+      const available = balanceAt(ledgerData, itemName, isSerial === 'YES' ? serial : null, fromLoc);
+      if (quantity > available) {
+        const tag = isSerial === 'YES' ? `(${serial})` : '';
+        ss.toast(`❌ 재고 부족: '${fromLoc}'에 ${itemName}${tag} ${available}개뿐입니다.`, 'Validation Error', 6);
+        return;
+      }
+    }
+
+    // Ledger에 기록!
+    ledgerSheet.appendRow([
+      new Date(), type, category, itemName, serial, fromLoc, toLoc, quantity, worker, note
+    ]);
+
+    // 폼 초기화
+    inputSheet.getRange('F3').setValue('ADD');
+    inputSheet.getRange('F5').setValue(isSerial === 'YES' ? '' : 'N/A');
+    inputSheet.getRange('F6:F7').clearContent();
+    inputSheet.getRange('F8').setValue(1);
+    inputSheet.getRange('F9:F10').clearContent();
+
+    // UI 갱신 함수 강제 호출 (초기화 후 회색으로 잠그기 위해)
+    updateDynamicUI(ss, inputSheet);
+
+    ss.toast(`✅ [${type}] Transaction recorded successfully!`, 'Success', 3);
+  } finally {
+    lock.releaseLock();
   }
-  
-  if (type === 'ADD' && !fromLoc) fromLoc = 'EXTERNAL (VENDOR)';
-  if (type === 'REMOVE' && !toLoc) toLoc = 'EXTERNAL (SCRAP)';
-  if (!fromLoc || !toLoc) {
-    ss.toast(`❌ Error: 'From' and 'To' locations must be valid.`, 'Validation Error', 5);
-    return;
+}
+
+/**
+ * 특정 위치(loc)에서의 현재 재고 = 들어온 수량(To) - 나간 수량(From).
+ * serial 인자가 주어지면 해당 시리얼만 계산한다.
+ * Ledger 열: [0]Timestamp [1]Type [2]Category [3]Item [4]Serial [5]From [6]To [7]Qty ...
+ */
+function balanceAt(ledgerData, itemName, serial, loc) {
+  let bal = 0;
+  for (let i = 1; i < ledgerData.length; i++) { // 0행은 헤더
+    const row = ledgerData[i];
+    if (row[3] !== itemName) continue;
+    if (serial && row[4] !== serial) continue;
+    const qty = Number(row[7]) || 0;
+    if (row[6] === loc) bal += qty; // To (+)
+    if (row[5] === loc) bal -= qty; // From (-)
   }
-  
-  // Ledger에 기록!
-  ledgerSheet.appendRow([
-    new Date(), type, category, itemName, serial, fromLoc, toLoc, quantity, worker, note
-  ]);
-  
-  // 폼 초기화
-  inputSheet.getRange('F3').setValue('ADD');
-  inputSheet.getRange('F5').setValue(isSerial === 'YES' ? '' : 'N/A');
-  inputSheet.getRange('F6:F7').clearContent();
-  inputSheet.getRange('F8').setValue(isSerial === 'YES' ? 1 : 1);
-  inputSheet.getRange('F9:F10').clearContent();
-  
-  // UI 갱신 함수 강제 호출 (초기화 후 회색으로 잠그기 위해)
-  updateDynamicUI(ss, inputSheet);
-  
-  ss.toast(`✅ [${type}] Transaction recorded successfully!`, 'Success', 3);
+  return bal;
+}
+
+/**
+ * 해당 시리얼이 현재 재고에 존재하는지 판정.
+ * 실제 위치로의 순유입(EXTERNAL 제외) > 0 이면 존재하는 것으로 본다.
+ */
+function serialExists(ledgerData, itemName, serial) {
+  let presence = 0;
+  for (let i = 1; i < ledgerData.length; i++) {
+    const row = ledgerData[i];
+    if (row[3] !== itemName || row[4] !== serial) continue;
+    const qty = Number(row[7]) || 0;
+    const from = String(row[5] || '');
+    const to = String(row[6] || '');
+    if (to && !to.startsWith('EXTERNAL')) presence += qty;
+    if (from && !from.startsWith('EXTERNAL')) presence -= qty;
+  }
+  return presence > 0;
 }
 
 /**
@@ -174,9 +240,9 @@ function onEdit(e) {
   const sheet = range.getSheet();
   const sheetName = sheet.getName();
 
-  // 1. 대문자 자동 변환 (전체 시트)
-  const excludeSheets = ['Dashboard', 'Ledger']; 
-  if (!excludeSheets.includes(sheetName)) {
+  // 1. 대문자 자동 변환 — 마스터 데이터인 Settings 시트에서만 적용.
+  //    (Worker/Note/시리얼 등 자유 입력값은 대소문자를 보존한다)
+  if (sheetName === 'Settings') {
     const values = range.getValues();
     const formulas = range.getFormulas();
     let isChanged = false;
