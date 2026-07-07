@@ -19,9 +19,9 @@ function setupInputSheet() {
   inputSheet.getRange('C4').setBackground('#fff2cc'); 
   inputSheet.getRange('B6:C6').setValues([['Location', 'Current Qty']]).setFontWeight('bold').setBackground('#f3f3f3');
   
-  // Real-time stock formula (수량열 H, 출발F, 도착G 반영)
+  // Real-time stock formula — 단일 소스인 Balance 시트에서 (물품별) 현재고>0 위치만 표시
   inputSheet.getRange('B7').setFormula(
-    `=IFERROR(LET(item, $C$4, buckets, TOCOL(LIST_BUCKET, 1, TRUE), balances, BYROW(buckets, LAMBDA(b, SUMIFS(Ledger!$H:$H, Ledger!$D:$D, item, Ledger!$G:$G, b) - SUMIFS(Ledger!$H:$H, Ledger!$D:$D, item, Ledger!$F:$F, b))), FILTER({buckets, balances}, balances <> 0)), "Item not selected or out of stock.")`
+    `=IFERROR(FILTER({Balance!$B$2:$B, Balance!$F$2:$F}, (Balance!$A$2:$A=$C$4)*(Balance!$F$2:$F<>0)), "Item not selected or out of stock.")`
   );
 
   // --- [Right Panel: Transaction Form] ---
@@ -45,9 +45,9 @@ function setupInputSheet() {
   inputSheet.getRange('F5').setBackground('#e1e1e1').setFontColor('#7f8c8d'); // 초기값은 잠금 상태
 
   // --- [Helper Columns W, Y, Z] ---
-  // ★ W열: (핵심!) 선택한 아이템이 From(F7) 위치에 존재하는 특정 시리얼만 필터링하는 수식
+  // ★ W열: 선택한 아이템의 현재고>0 위치만 (From 드롭다운 근거). Balance 시트에서 조회.
   inputSheet.getRange('W1').setFormula(
-    `=IFERROR(UNIQUE(FILTER(TOCOL(LIST_BUCKET, 1, TRUE), BYROW(TOCOL(LIST_BUCKET, 1, TRUE), LAMBDA(b, SUMIFS(Ledger!$H:$H, Ledger!$D:$D, $C$4, Ledger!$G:$G, b) - SUMIFS(Ledger!$H:$H, Ledger!$D:$D, $C$4, Ledger!$F:$F, b))) > 0)), "")`
+    `=IFERROR(FILTER(Balance!$B$2:$B, (Balance!$A$2:$A=$C$4)*(Balance!$F$2:$F>0)), "")`
   );
   inputSheet.hideColumns(23); // W열 숨김
   
@@ -155,8 +155,10 @@ function submitTransaction() {
       return;
     }
 
-    // 검증용 원장 스냅샷 (Lock 안에서 읽어 일관성 보장)
+    // 검증용 스냅샷 (Lock 안에서 읽어 일관성 보장)
     const ledgerData = ledgerSheet.getDataRange().getValues();
+    const initSheet = ss.getSheetByName('Initial_Inventory');
+    const initData = initSheet ? initSheet.getDataRange().getValues() : [];
 
     // ① 시리얼 품목 ADD 중복 등록 방지
     if (type === 'ADD' && isSerial === 'YES' && serialExists(ledgerData, itemName, serial)) {
@@ -166,7 +168,7 @@ function submitTransaction() {
 
     // ② MOVE/REMOVE 시 출발지 재고 부족 방지 (음수 재고 차단)
     if (type === 'MOVE' || type === 'REMOVE') {
-      const available = balanceAt(ledgerData, itemName, isSerial === 'YES' ? serial : null, fromLoc);
+      const available = balanceAt(ledgerData, initData, itemName, isSerial === 'YES' ? serial : null, fromLoc);
       if (quantity > available) {
         const tag = isSerial === 'YES' ? `(${serial})` : '';
         ss.toast(`❌ 재고 부족: '${fromLoc}'에 ${itemName}${tag} ${available}개뿐입니다.`, 'Validation Error', 6);
@@ -196,11 +198,12 @@ function submitTransaction() {
 }
 
 /**
- * 특정 위치(loc)에서의 현재 재고 = 들어온 수량(To) - 나간 수량(From).
- * serial 인자가 주어지면 해당 시리얼만 계산한다.
+ * 특정 위치(loc)에서의 현재 재고 = U(최초재고) + 들어온 수량(To) - 나간 수량(From).
+ * serial 인자가 주어지면 해당 시리얼만 계산한다(시리얼 단위엔 U를 적용하지 않음).
  * Ledger 열: [0]Timestamp [1]Type [2]Category [3]Item [4]Serial [5]From [6]To [7]Qty ...
+ * Initial 열: [0]Item [1]Location [2]Initial Qty(U)
  */
-function balanceAt(ledgerData, itemName, serial, loc) {
+function balanceAt(ledgerData, initData, itemName, serial, loc) {
   let bal = 0;
   for (let i = 1; i < ledgerData.length; i++) { // 0행은 헤더
     const row = ledgerData[i];
@@ -209,6 +212,13 @@ function balanceAt(ledgerData, itemName, serial, loc) {
     const qty = Number(row[7]) || 0;
     if (row[6] === loc) bal += qty; // To (+)
     if (row[5] === loc) bal -= qty; // From (-)
+  }
+  // 최초 재고(U)는 물품×위치 단위(비시리얼)에만 더한다.
+  if (!serial && initData && initData.length) {
+    for (let i = 1; i < initData.length; i++) {
+      const r = initData[i];
+      if (r[0] === itemName && r[1] === loc) bal += Number(r[2]) || 0;
+    }
   }
   return bal;
 }
